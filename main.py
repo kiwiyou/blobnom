@@ -46,7 +46,7 @@ async def room_info(db: Session = Depends(get_db)):
     rooms = (db.query(Room)
              .order_by(Room.begin.desc())
              .options(joinedload(Room.user_associations).joinedload(UserRoom.user))
-             .limit(20)
+             .limit(40)
              .all())
 
     # public과 private 방으로 분류
