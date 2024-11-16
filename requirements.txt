@@ -5,3 +5,4 @@ starlette
 uvicorn
 psycopg2-binary
 pytz
+dotenv
