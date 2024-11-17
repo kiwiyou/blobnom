@@ -22,6 +22,8 @@ except:
 origins = [
     "http://localhost:5173",
     "https://blobnom.netlify.app",
+    "http://blobnom.xyz",
+    "https://blobnom.xyz",
 ]
 app = FastAPI(docs_url=None, redoc_url=None)
 app.add_middleware(
