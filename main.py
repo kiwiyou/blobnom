@@ -12,6 +12,8 @@ from database import engine, SessionLocal
 from models import Problem, User, ProblemRoom, UserRoom, Room
 import pytz
 
+MAX_USER_PER_ROOM = 20
+
 korea_tz = pytz.timezone('Asia/Seoul')
 
 try:
@@ -64,10 +66,10 @@ async def room_info(db: Session = Depends(get_db)):
             "public": room.public,
             "top_user": max(
                 (
-                    {"name": assoc.user.name, "score": assoc.score}
+                    {"name": assoc.user.name, "score": assoc.score, "score2": assoc.score2}
                     for assoc in room.user_associations
                 ),
-                key=lambda x: x["score"],
+                key=lambda x: (x["score"], x["score2"]),
                 default={"name": None, "score": 0}
             )
         }
@@ -94,72 +96,105 @@ async def room_info(id: int, db: Session = Depends(get_db)):
 
 @app.post("/room/join/{id}")
 async def room_join(id: int, handle: str = Body(...), db: Session = Depends(get_db)):
-    cnt = db.query(UserRoom).filter(UserRoom.room_id == id).count()
-    if cnt >= 16:
-        return HTTPException(status_code=400)
+    async with httpx.AsyncClient() as client:
+        users = db.query(UserRoom).filter(UserRoom.room_id == id).all()
+        if len(users) >= MAX_USER_PER_ROOM:
+            raise HTTPException(status_code=400, detail="인원이 가득 찼습니다.")
 
-    if not db.query(User).filter(User.name == handle).first():
-        user = User(name=handle)
-        db.add(user)
-        db.commit()
-        db.refresh(user)
-    else:
-        user = db.query(User).filter(User.name == handle).first()
-        if db.query(UserRoom).filter(UserRoom.room_id == id, UserRoom.user_id == user.id).first():
+        if not db.query(User).filter(User.name == handle).first():
+            user = User(name=handle)
+            db.add(user)
+            db.commit()
+            db.refresh(user)
+        else:
+            user = db.query(User).filter(User.name == handle).first()
+            if db.query(UserRoom).filter(UserRoom.room_id == id, UserRoom.user_id == user.id).first():
+                raise HTTPException(status_code=400, detail="이미 존재하는 유저입니다.")
+
+        query = "@" + handle
+        response = await client.get("https://solved.ac/api/v3/search/problem",
+                                    params={"query": query})
+        if len(response.json()["items"]) == 0:
+            raise HTTPException(status_code=400, detail="유효하지 않은 핸들입니다.")
+
+        vis = [0 for _ in range(100)]
+        for u in users:
+            vis[u.index_in_room] = 1
+
+        idx = -1
+        for i in range(100):
+            if not vis[i]:
+                idx = i
+                break
+
+        if idx == -1:
             raise HTTPException(status_code=400)
 
-    user_room = UserRoom(
-        user_id=user.id,
-        room_id=id,
-        index_in_room=cnt,
-        score=0,
-    )
-    db.add(user_room)
-    db.commit()
+        room = db.query(Room).filter(Room.id == id).first()
+        problemIds = [problem.id for problem in room.problems]
 
-    room = db.query(Room).filter(Room.id == id).first()
-    problemIds = [problem.id for problem in room.problems]
+        already_solved = []
 
-    async with httpx.AsyncClient() as client:
         for problemId in problemIds:
             query = str(problemId) + " @" + handle
             response = await client.get("https://solved.ac/api/v3/search/problem",
                                         params={"query": query})
             items = response.json()["items"]
             for item in items:
-                print(item["problemId"])
-                problem_room = db.query(ProblemRoom).filter(
-                    ProblemRoom.problem_id == item["problemId"],
-                    ProblemRoom.room_id == id
-                ).first()
-                if problem_room is not None and problem_room.solved_at is None:
-                    # problem_room.solved_at = datetime.now(korea_tz)
-                    problem_room.solved_at = room.begin
-                    problem_room.solved_by = user_room.index_in_room
-                    db.add(user_room)
-                    db.add(problem_room)
-                    db.commit()
-                    db.refresh(problem_room)
-        await calculate(id, db)
+                already_solved.append(item["problemId"])
 
-    return {"success": True}
+        if len(already_solved) > 3:
+            raise HTTPException(status_code=400, detail="이미 해결한 문제가 3문제를 초과하여 참여할 수 없습니다.")
+
+        user_room = UserRoom(
+            user_id=user.id,
+            room_id=id,
+            index_in_room=idx,
+            score=0,
+        )
+        db.add(user_room)
+        db.commit()
+
+        for problemId in already_solved:
+            problem_room = db.query(ProblemRoom).filter(
+                ProblemRoom.problem_id == problemId,
+                ProblemRoom.room_id == id
+            ).first()
+            if problem_room is not None and problem_room.solved_at is None:
+                problem_room.solved_at = room.begin
+                problem_room.solved_by = user_room.index_in_room
+                db.add(user_room)
+                db.add(problem_room)
+                db.commit()
+                db.refresh(problem_room)
+
+        await calculate(id, db)
+        return {"success": True}
 
 
 async def calculate(roomId, db):
-    print(roomId)
     room = db.query(Room).filter(Room.id == roomId).first()
     if not room:
         return
     n = 3 * room.size * (room.size + 1) + 1
     w = room.size * 2 + 1
+
+    room_users = db.query(UserRoom).filter(
+        UserRoom.room_id == roomId
+    ).all()
     mp = [[-1 for _ in range(w)] for _ in range(w)]
     sol = [-1 for _ in range(n)]
+    score2s = [0 for _ in range(MAX_USER_PER_ROOM)]
     for i in range(n):
         sol[i] = db.query(ProblemRoom) \
             .filter(ProblemRoom.room_id == roomId, ProblemRoom.index_in_room == i).first() \
             .solved_by
+
         if sol[i] is None:
             sol[i] = -1
+        else:
+            score2s[sol[i]] += 1
+
     ptr = 0
     for i in range(w):
         s = max(0, i - w // 2)
@@ -179,12 +214,9 @@ async def calculate(roomId, db):
             if i + 1 < w and j + 1 < w and mp[i + 1][j + 1] >= 0:
                 adj[mp[i][j]].append(mp[i + 1][j + 1])
                 adj[mp[i + 1][j + 1]].append(mp[i][j])
-    room_users = db.query(UserRoom).filter(
-        UserRoom.room_id == roomId
-    ).all()
-    scores = [0 for _ in range(len(room_users))]
+
+    scores = [0 for _ in range(MAX_USER_PER_ROOM)]
     vis = [False for _ in range(n)]
-    print(sol)
     for i in range(n):
         if sol[i] < 0 or vis[i]: continue
         q = deque([])
@@ -192,7 +224,6 @@ async def calculate(roomId, db):
         cur_sz = 0
         while q:
             u = q.popleft()
-            # print(u)
             if vis[u]:
                 continue
             vis[u] = True
@@ -200,8 +231,10 @@ async def calculate(roomId, db):
             for v in adj[u]:
                 if sol[v] == sol[i]: q.append(v)
         scores[sol[i]] = max(scores[sol[i]], cur_sz)
+
     for user in room_users:
         user.score = scores[user.index_in_room]
+        user.score2 = score2s[user.index_in_room]
         db.add(user)
     db.commit()
 

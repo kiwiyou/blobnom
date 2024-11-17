@@ -26,6 +26,7 @@ class UserRoom(Base):
     room_id = Column(ForeignKey("rooms.id"), primary_key=True)
     index_in_room = Column(Integer, nullable=False)
     score = Column(Integer)
+    score2 = Column(Integer)
 
     user = relationship("User", back_populates="room_associations")
     room = relationship("Room", back_populates="user_associations")
