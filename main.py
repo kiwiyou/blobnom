@@ -288,9 +288,9 @@ async def create_room(db: Session = Depends(get_db),
 
         items = []
         ids = []
-        for page in range(1, 5):
+        for page in range(1, 7):
             response = await client.get("https://solved.ac/api/v3/search/problem",
-                                        params={"query": query, "sort": "random", "page": page})
+                                        params={"query": query, "sort": "random", "page": 1})
             tmp = response.json()["items"]
             for item in tmp:
                 if item["problemId"] not in ids:
