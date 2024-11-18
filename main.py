@@ -50,7 +50,7 @@ async def room_info(db: Session = Depends(get_db)):
     rooms = (db.query(Room)
              .order_by(Room.begin.desc())
              .options(joinedload(Room.user_associations).joinedload(UserRoom.user))
-             .limit(60)
+             .limit(120)
              .all())
 
     public_rooms = []
