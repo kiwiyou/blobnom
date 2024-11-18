@@ -143,8 +143,8 @@ async def room_join(id: int, handle: str = Body(...), db: Session = Depends(get_
             for item in items:
                 already_solved.append(item["problemId"])
 
-        if len(already_solved) > 3:
-            raise HTTPException(status_code=400, detail="이미 해결한 문제가 3문제를 초과하여 참여할 수 없습니다.")
+        if len(already_solved) > 2:
+            raise HTTPException(status_code=400, detail="이미 해결한 문제가 2문제를 초과하여 참여할 수 없습니다.")
 
         user_room = UserRoom(
             user_id=user.id,
