@@ -4,6 +4,7 @@ from datetime import datetime
 
 import httpx
 from fastapi import FastAPI, Form, Body, HTTPException, Depends
+from sqlalchemy import func
 from sqlalchemy.orm import Session, joinedload
 from starlette.middleware.cors import CORSMiddleware
 
@@ -48,7 +49,12 @@ def get_db():
 @app.get("/")
 async def room_info(db: Session = Depends(get_db)):
     rooms = (db.query(Room)
-             .order_by(Room.begin.desc())
+             .outerjoin(ProblemRoom)
+             .group_by(Room.id)
+             .order_by(func.greatest(
+        Room.begin,
+        func.coalesce(func.max(ProblemRoom.solved_at), Room.begin)
+    ).desc())
              .options(joinedload(Room.user_associations).joinedload(UserRoom.user))
              .limit(120)
              .all())
