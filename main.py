@@ -64,6 +64,8 @@ async def room_info(db: Session = Depends(get_db)):
             "begin": room.begin,
             "end": room.end,
             "public": room.public,
+            "users": len(room.users),
+
             "top_user": max(
                 (
                     {"name": assoc.user.name, "score": assoc.score, "score2": assoc.score2}
